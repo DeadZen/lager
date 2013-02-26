@@ -22,7 +22,7 @@
         ensure_logfile/4, rotate_logfile/2, format_time/0, format_time/1,
         localtime_ms/0, maybe_utc/1, parse_rotation_date_spec/1,
         calculate_next_rotation/1, validate_trace/1, check_traces/4, 
-        is_loggable/3, trace_all/1, trace_any/1]).
+        is_loggable/3]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -276,15 +276,17 @@ calculate_next_rotation([{date, Date}|T], {{Year, Month, Day}, _} = Now) ->
     NewNow = calendar:gregorian_seconds_to_datetime(Seconds),
     calculate_next_rotation(T, NewNow).
 
-validate_trace({Filter, Level, {Destination, ID}}) when is_tuple(Filter), is_atom(Level), is_atom(Destination) ->
+validate_trace({Filter, Level, {Destination, ID}}) when is_tuple(Filter); is_list(Filter), is_atom(Level), is_atom(Destination) ->
     case validate_trace({Filter, Level, Destination}) of
         {ok, {F, L, D}} ->
             {ok, {F, L, {D, ID}}};
         Error ->
             Error
     end;
-validate_trace({Filter, Level, Destination}) when is_tuple(Filter), is_atom(Level), is_atom(Destination) ->
+validate_trace({Filter, Level, Destination}) when is_tuple(Filter); is_list(Filter), is_atom(Level), is_atom(Destination) ->
     try level_to_num(Level) of
+        L when is_list(Filter)  ->
+            {ok, {glc_lib:reduce(trace_all(Filter)), L, Destination}};
         L ->
             {ok, {glc_lib:reduce(Filter), L, Destination}}
     catch
@@ -296,19 +298,29 @@ validate_trace(_) ->
 
 
 trace_all(Query) -> 
-	glc:all(trace_acc(Query, [])).
+	glc:all(trace_acc(Query)).
 
-trace_any(Query) -> 
-	glc:any(trace_acc(Query, [])).
+%% unused, since adding multiple traces is basically the same thing
+%trace_any(Query) -> 
+%	glc:any(trace_acc(Query)).
+
+trace_acc(Query) ->
+    trace_acc(Query, []).
 
 trace_acc([], Acc) -> 
 	lists:reverse(Acc);
+trace_acc([{Key, '*'}|T], Acc) ->
+	trace_acc(T, [glc:wc(Key, undefined)|Acc]);
 trace_acc([{Key, Val}|T], Acc) ->
+	trace_acc(T, [glc:eq(Key, Val)|Acc]);
+trace_acc([{Key, '=', Val}|T], Acc) ->
 	trace_acc(T, [glc:eq(Key, Val)|Acc]);
 trace_acc([{Key, '>', Val}|T], Acc) ->
 	trace_acc(T, [glc:gt(Key, Val)|Acc]);
 trace_acc([{Key, '<', Val}|T], Acc) ->
-	trace_acc(T, [glc:lt(Key, Val)|Acc]).
+	trace_acc(T, [glc:lt(Key, Val)|Acc]);
+trace_acc([{Key, '*', Val}|T], Acc) ->
+	trace_acc(T, [glc:wc(Key, Val)|Acc]).
 	
 
 check_traces(_, _,  [], Acc) ->

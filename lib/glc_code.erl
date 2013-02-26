@@ -151,7 +151,7 @@ abstract_filter_({null, true}, OnMatch, _OnNomatch, State) ->
 abstract_filter_({null, false}, _OnMatch, OnNomatch, State) ->
     OnNomatch(State);
 abstract_filter_({Key, Op, Value}, OnMatch, OnNomatch, State)
-        when Op =:= '>'; Op =:= '='; Op =:= '<' ->
+        when Op =:= '>'; Op =:= '='; Op =:= '<'; Op =:= '*' ->
     Op2 = case Op of '=' -> '=:='; Op -> Op end,
     abstract_opfilter(Key, Op2, Value, OnMatch, OnNomatch, State);
 abstract_filter_({'any', Conds}, OnMatch, OnNomatch, State) ->

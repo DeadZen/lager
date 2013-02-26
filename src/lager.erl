@@ -23,11 +23,11 @@
 %% API
 -export([start/0,
         log/3, log/4, filter/1, filter/2,
-        trace_file/2, trace_file/3, trace_console/1, trace_console/2,
+        trace/2, trace/3, trace_file/2, trace_file/3, trace_console/1, trace_console/2,
         clear_all_traces/0, stop_trace/1, status/0,
         get_loglevel/1, set_loglevel/2, set_loglevel/3, get_loglevels/0,
         minimum_loglevel/1, posix_error/1,
-        safe_format/3, safe_format_chop/3,dispatch_log/5]).
+        safe_format/3, safe_format_chop/3,dispatch_log/5, pr/2]).
 
 -type log_level() :: debug | info | notice | warning | error | critical | alert | emergency.
 -type log_level_number() :: 0..7.
@@ -95,8 +95,6 @@ log(Level, Pid, Format, Args) when is_pid(Pid); is_atom(Pid) ->
 log(Level, Metadata, Format, Args) when is_list(Metadata) ->
     dispatch_log(Level, Metadata, Format, Args, ?DEFAULT_TRUNCATION).
 
-trace_file(File, Filter) when is_list(Filter) ->
-    trace_file(File, lager_util:trace_all(Filter));
 trace_file(File, Filter) ->
     trace_file(File, Filter, debug).
 
@@ -155,13 +153,17 @@ filter(Module, Query) ->
             end)).
 
 
-trace_console(Filter) when is_list(Filter) ->
-    trace_console(lager_util:trace_all(Filter));
 trace_console(Filter) ->
     trace_console(Filter, debug).
 
 trace_console(Filter, Level) ->
-    Trace0 = {Filter, Level, lager_console_backend},
+    trace(lager_console_backend, Filter, Level).
+
+trace(Backend, Filter) ->
+    trace(Backend, Filter, debug).
+
+trace(Backend, Filter, Level) ->
+    Trace0 = {Filter, Level, Backend},
     case lager_util:validate_trace(Trace0) of
         {ok, Trace} ->
             {MinLevel, TraceMod, Traces} = lager_config:get(loglevel),
@@ -226,7 +228,7 @@ status() ->
         [begin
                     io_lib:format("Tracing messages matching ~p at level ~p to ~p\n",
                         [Filter, lager_util:num_to_level(Level), Destination])
-            end || {Filter, Level, Destination} <- element(2, lager_config:get(loglevel))]],
+            end || {Filter, Level, Destination} <- element(3, lager_config:get(loglevel))]],
     io:put_chars(Status).
 
 %% @doc Set the loglevel for a particular backend.
@@ -295,3 +297,33 @@ safe_format(Fmt, Args, Limit, Options) ->
 %% @private
 safe_format_chop(Fmt, Args, Limit) ->
     safe_format(Fmt, Args, Limit, [{chomp, true}]).
+
+%% @doc Print a record lager found during parse transform
+pr(Record, Module) when is_tuple(Record), is_atom(element(1, Record)) ->
+    try Module:module_info(attributes) of
+        Attrs ->
+            case lists:keyfind(lager_records, 1, Attrs) of
+                false ->
+                    Record;
+                {lager_records, Records} ->
+                    RecordName = element(1, Record),
+                    RecordSize = tuple_size(Record) - 1,
+                    case lists:filter(fun({Name, Fields}) when Name == RecordName,
+                                length(Fields) == RecordSize ->
+                                    true;
+                                (_) ->
+                                    false
+                            end, Records) of
+                        [] ->
+                            Record;
+                        [{RecordName, RecordFields}|_] ->
+                            {'$lager_record', RecordName,
+                                lists:zip(RecordFields, tl(tuple_to_list(Record)))}
+                    end
+            end
+    catch
+        error:undef ->
+            Record
+    end;
+pr(Record, _) ->
+    Record.

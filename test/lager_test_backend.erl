@@ -24,11 +24,12 @@
         code_change/3]).
 
 -record(state, {level, buffer, ignored}).
+-record(test, {attrs, format, args}).
 -compile([{parse_transform, lager_transform}]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
--export([pop/0, count/0, count_ignored/0, flush/0]).
+-export([pop/0, count/0, count_ignored/0, flush/0, print_state/0]).
 -endif.
 
 init(Level) ->
@@ -51,6 +52,14 @@ handle_call(get_loglevel, #state{level=Level} = State) ->
     {ok, Level, State};
 handle_call({set_loglevel, Level}, State) ->
     {ok, ok, State#state{level=lager_util:level_to_num(Level)}};
+handle_call(print_state, State) ->
+    spawn(fun() -> lager:info("State ~p", [lager:pr(State, ?MODULE)]) end),
+    timer:sleep(100),
+    {ok, ok, State};
+handle_call(print_bad_state, State) ->
+    spawn(fun() -> lager:info("State ~p", [lager:pr({state, 1}, ?MODULE)]) end),
+    timer:sleep(100),
+    {ok, ok, State};
 handle_call(_Request, State) ->
     {ok, ok, State}.
 
@@ -88,6 +97,12 @@ count_ignored() ->
 
 flush() ->
     gen_event:call(lager_event, ?MODULE, flush).
+
+print_state() ->
+    gen_event:call(lager_event, ?MODULE, print_state).
+
+print_bad_state() ->
+    gen_event:call(lager_event, ?MODULE, print_bad_state).
 
 has_line_numbers() ->
     %% are we R15 or greater
@@ -164,6 +179,125 @@ lager_test_() ->
                         ok
                 end
             },
+            {"variables inplace of literals in logging statements work",
+                fun() ->
+                        ?assertEqual(0, count()),
+                        Attr = [{a, alpha}, {b, beta}],
+                        Fmt = "format ~p",
+                        Args = [world],
+                        lager:info(Attr, "hello"),
+                        lager:info(Attr, "hello ~p", [world]),
+                        lager:info(Fmt, [world]),
+                        lager:info("hello ~p", Args),
+                        lager:info(Attr, "hello ~p", Args),
+                        lager:info([{d, delta}, {g, gamma}], Fmt, Args),
+                        ?assertEqual(6, count()),
+                        {_Level, _Time, Message, Metadata}  = pop(),
+                        ?assertMatch([{a, alpha}, {b, beta}|_], Metadata),
+                        ?assertEqual("hello", lists:flatten(Message)),
+                        {_Level, _Time2, Message2, _Metadata2}  = pop(),
+                        ?assertEqual("hello world", lists:flatten(Message2)),
+                        {_Level, _Time3, Message3, _Metadata3}  = pop(),
+                        ?assertEqual("format world", lists:flatten(Message3)),
+                        {_Level, _Time4, Message4, _Metadata4}  = pop(),
+                        ?assertEqual("hello world", lists:flatten(Message4)),
+                        {_Level, _Time5, Message5, _Metadata5}  = pop(),
+                        ?assertEqual("hello world", lists:flatten(Message5)),
+                        {_Level, _Time6, Message6, Metadata6}  = pop(),
+                        ?assertMatch([{d, delta}, {g, gamma}|_], Metadata6),
+                        ?assertEqual("format world", lists:flatten(Message6)),
+                        ok
+                end
+            },
+            {"list comprehension inplace of literals in logging statements work",
+                fun() ->
+                        ?assertEqual(0, count()),
+                        Attr = [{a, alpha}, {b, beta}],
+                        Fmt = "format ~p",
+                        Args = [world],
+                        lager:info([{K, atom_to_list(V)} || {K, V} <- Attr], "hello"),
+                        lager:info([{K, atom_to_list(V)} || {K, V} <- Attr], "hello ~p", [{atom, X} || X <- Args]),
+                        lager:info([X || X <- Fmt], [world]),
+                        lager:info("hello ~p", [{atom, X} || X <- Args]),
+                        lager:info([{K, atom_to_list(V)} || {K, V} <- Attr], "hello ~p", [{atom, X} || X <- Args]),
+                        lager:info([{d, delta}, {g, gamma}], Fmt, [{atom, X} || X <- Args]),
+                        ?assertEqual(6, count()),
+                        {_Level, _Time, Message, Metadata}  = pop(),
+                        ?assertMatch([{a, "alpha"}, {b, "beta"}|_], Metadata),
+                        ?assertEqual("hello", lists:flatten(Message)),
+                        {_Level, _Time2, Message2, _Metadata2}  = pop(),
+                        ?assertEqual("hello {atom,world}", lists:flatten(Message2)),
+                        {_Level, _Time3, Message3, _Metadata3}  = pop(),
+                        ?assertEqual("format world", lists:flatten(Message3)),
+                        {_Level, _Time4, Message4, _Metadata4}  = pop(),
+                        ?assertEqual("hello {atom,world}", lists:flatten(Message4)),
+                        {_Level, _Time5, Message5, _Metadata5}  = pop(),
+                        ?assertEqual("hello {atom,world}", lists:flatten(Message5)),
+                        {_Level, _Time6, Message6, Metadata6}  = pop(),
+                        ?assertMatch([{d, delta}, {g, gamma}|_], Metadata6),
+                        ?assertEqual("format {atom,world}", lists:flatten(Message6)),
+                        ok
+                end
+            },
+            {"function calls inplace of literals in logging statements work",
+                fun() ->
+                        ?assertEqual(0, count()),
+                        put(attrs, [{a, alpha}, {b, beta}]),
+                        put(format, "format ~p"),
+                        put(args, [world]),
+                        lager:info(get(attrs), "hello"),
+                        lager:info(get(attrs), "hello ~p", get(args)),
+                        lager:info(get(format), [world]),
+                        lager:info("hello ~p", erlang:get(args)),
+                        lager:info(fun() -> get(attrs) end(), "hello ~p", get(args)),
+                        lager:info([{d, delta}, {g, gamma}], get(format), get(args)),
+                        ?assertEqual(6, count()),
+                        {_Level, _Time, Message, Metadata}  = pop(),
+                        ?assertMatch([{a, alpha}, {b, beta}|_], Metadata),
+                        ?assertEqual("hello", lists:flatten(Message)),
+                        {_Level, _Time2, Message2, _Metadata2}  = pop(),
+                        ?assertEqual("hello world", lists:flatten(Message2)),
+                        {_Level, _Time3, Message3, _Metadata3}  = pop(),
+                        ?assertEqual("format world", lists:flatten(Message3)),
+                        {_Level, _Time4, Message4, _Metadata4}  = pop(),
+                        ?assertEqual("hello world", lists:flatten(Message4)),
+                        {_Level, _Time5, Message5, _Metadata5}  = pop(),
+                        ?assertEqual("hello world", lists:flatten(Message5)),
+                        {_Level, _Time6, Message6, Metadata6}  = pop(),
+                        ?assertMatch([{d, delta}, {g, gamma}|_], Metadata6),
+                        ?assertEqual("format world", lists:flatten(Message6)),
+                        ok
+                end
+            },
+            {"record fields inplace of literals in logging statements work",
+                fun() ->
+                        ?assertEqual(0, count()),
+                        Test = #test{attrs=[{a, alpha}, {b, beta}], format="format ~p", args=[world]},
+                        lager:info(Test#test.attrs, "hello"),
+                        lager:info(Test#test.attrs, "hello ~p", Test#test.args),
+                        lager:info(Test#test.format, [world]),
+                        lager:info("hello ~p", Test#test.args),
+                        lager:info(Test#test.attrs, "hello ~p", Test#test.args),
+                        lager:info([{d, delta}, {g, gamma}], Test#test.format, Test#test.args),
+                        ?assertEqual(6, count()),
+                        {_Level, _Time, Message, Metadata}  = pop(),
+                        ?assertMatch([{a, alpha}, {b, beta}|_], Metadata),
+                        ?assertEqual("hello", lists:flatten(Message)),
+                        {_Level, _Time2, Message2, _Metadata2}  = pop(),
+                        ?assertEqual("hello world", lists:flatten(Message2)),
+                        {_Level, _Time3, Message3, _Metadata3}  = pop(),
+                        ?assertEqual("format world", lists:flatten(Message3)),
+                        {_Level, _Time4, Message4, _Metadata4}  = pop(),
+                        ?assertEqual("hello world", lists:flatten(Message4)),
+                        {_Level, _Time5, Message5, _Metadata5}  = pop(),
+                        ?assertEqual("hello world", lists:flatten(Message5)),
+                        {_Level, _Time6, Message6, Metadata6}  = pop(),
+                        ?assertMatch([{d, delta}, {g, gamma}|_], Metadata6),
+                        ?assertEqual("format world", lists:flatten(Message6)),
+                        ok
+                end
+            },
+
             {"log messages below the threshold are ignored",
                 fun() ->
                         ?assertEqual(0, count()),
@@ -187,24 +321,28 @@ lager_test_() ->
                         lager_config:set(loglevel, {?ERROR, ?DEFAULT_TRACER, []}),
                         ok = lager:info("hello world"),
                         ?assertEqual(0, count()),
-                        lager_config:set(loglevel, {?ERROR, ?DEFAULT_TRACER, [{[{module,
-                                                ?MODULE}], ?DEBUG, ?MODULE}]}),
+                        lager:trace(?MODULE, [{module, ?MODULE}], debug),
+                        %% eligible for tracing
                         ok = lager:info("hello world"),
+                        %% NOT eligible for tracing
+                        ok = lager:log(info, [{pid, self()}], "hello world"),
                         ?assertEqual(1, count()),
                         ok
                 end
             },
             {"tracing works with custom attributes",
                 fun() ->
+                        lager:set_loglevel(?MODULE, error),
                         lager_config:set(loglevel, {?ERROR, ?DEFAULT_TRACER, []}),
                         lager:info([{requestid, 6}], "hello world"),
                         ?assertEqual(0, count()),
-                        lager_config:set(loglevel, {?ERROR,
-                                ?DEFAULT_TRACER, [{[{requestid, 6}], ?DEBUG, ?MODULE}]}),
+                        lager:trace(?MODULE, [{requestid, 6}, {foo, bar}], debug),
                         lager:info([{requestid, 6}, {foo, bar}], "hello world"),
                         ?assertEqual(1, count()),
-                        lager_config:set(loglevel, {?ERROR,
-                                ?DEFAULT_TRACER, [{[{requestid, '*'}], ?DEBUG, ?MODULE}]}),
+                        lager:trace(?MODULE, [{requestid, '*'}], debug),
+                        lager:info([{requestid, 6}], "hello world"),
+                        ?assertEqual(2, count()),
+                        lager:clear_all_traces(),
                         lager:info([{requestid, 6}], "hello world"),
                         ?assertEqual(2, count()),
                         ok
@@ -212,14 +350,63 @@ lager_test_() ->
             },
             {"tracing honors loglevel",
                 fun() ->
-                        lager_config:set(loglevel, {?ERROR, ?DEFAULT_TRACER, [{[{module,
-                                                ?MODULE}], ?NOTICE, ?MODULE}]}),
-
-                        X = lager:info("hello world"),
+                        lager:set_loglevel(?MODULE, error),
+                        {ok, T} = lager:trace(?MODULE, [{module, ?MODULE}], notice),
                         ok = lager:info("hello world"),
                         ?assertEqual(0, count()),
                         ok = lager:notice("hello world"),
                         ?assertEqual(1, count()),
+                        lager:stop_trace(T),
+                        ok = lager:notice("hello world"),
+                        ?assertEqual(1, count()),
+                        ok
+                end
+            },
+            {"record printing works",
+                fun() ->
+                        print_state(),
+                        {Level, _Time, Message, _Metadata}  = pop(),
+                        ?assertMatch(Level, lager_util:level_to_num(info)),
+                        ?assertEqual("State #state{level=6,buffer=[],ignored=[]}", lists:flatten(Message)),
+                        ok
+                end
+            },
+            {"record printing fails gracefully",
+                fun() ->
+                        print_bad_state(),
+                        {Level, _Time, Message, _Metadata}  = pop(),
+                        ?assertMatch(Level, lager_util:level_to_num(info)),
+                        ?assertEqual("State {state,1}", lists:flatten(Message)),
+                        ok
+                end
+            },
+            {"record printing fails gracefully when no lager_record attribute",
+                fun() ->
+                        spawn(fun() -> lager:info("State ~p", [lager:pr({state, 1}, lager)]) end),
+                        timer:sleep(100),
+                        {Level, _Time, Message, _Metadata}  = pop(),
+                        ?assertMatch(Level, lager_util:level_to_num(info)),
+                        ?assertEqual("State {state,1}", lists:flatten(Message)),
+                        ok
+                end
+            },
+            {"record printing fails gracefully when input is not a tuple",
+                fun() ->
+                        spawn(fun() -> lager:info("State ~p", [lager:pr(ok, lager)]) end),
+                        timer:sleep(100),
+                        {Level, _Time, Message, _Metadata}  = pop(),
+                        ?assertMatch(Level, lager_util:level_to_num(info)),
+                        ?assertEqual("State ok", lists:flatten(Message)),
+                        ok
+                end
+            },
+            {"record printing fails gracefully when module is invalid",
+                fun() ->
+                        spawn(fun() -> lager:info("State ~p", [lager:pr({state, 1}, not_a_module)]) end),
+                        timer:sleep(100),
+                        {Level, _Time, Message, _Metadata}  = pop(),
+                        ?assertMatch(Level, lager_util:level_to_num(info)),
+                        ?assertEqual("State {state,1}", lists:flatten(Message)),
                         ok
                 end
             }

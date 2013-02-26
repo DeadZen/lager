@@ -30,6 +30,8 @@
 %% glc:eq(a, 0).
 %% %% Select all events where 'a' exists and is less than 0.
 %% glc:lt(a, 0).
+%% %% Select all events where 'a' exists and is anything.
+%% glc:wc(a, 0).
 %%
 %% %% Select no input events. Used as black hole query.
 %% glc:null(false).
@@ -68,7 +70,8 @@
 -export([
     lt/2,
     eq/2,
-    gt/2
+    gt/2,
+    wc/2
 ]).
 
 -export([
@@ -100,6 +103,9 @@ eq(Key, Term) ->
 gt(Key, Term) ->
     glc_ops:gt(Key, Term).
 
+-spec wc(atom(), term()) -> glc_ops:op().
+wc(Key, Term) ->
+    glc_ops:wc(Key, Term).
 
 %% @doc Filter the input using multiple filters.
 %%
